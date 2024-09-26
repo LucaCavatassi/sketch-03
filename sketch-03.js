@@ -2,18 +2,44 @@ const canvasSketch = require('canvas-sketch');
 const random = require('canvas-sketch-util/random');
 const math = require('canvas-sketch-util/math');
 
+let midiOutput;
+
+// Request MIDI access in the browser
+if (navigator.requestMIDIAccess) {
+  navigator.requestMIDIAccess().then(onMIDISuccess, onMIDIFailure);
+} else {
+  console.error('Web MIDI is not supported in this browser.');
+}
+
+function onMIDISuccess(midiAccess) {
+  const outputs = midiAccess.outputs.values();
+  for (let output of outputs) {
+    midiOutput = output; // Get the first available MIDI output
+    console.log('MIDI Output selected:', midiOutput.name);
+  }
+}
+
+function onMIDIFailure() {
+  console.error('Could not access your MIDI devices.');
+}
+
 const settings = {
   dimensions: [1080, 1350], // Instagram-friendly portrait aspect ratio (4:5)
   animate: true,
-  fps: 60, // Max FPS for Instagram
+  fps: 60, // Max FPS for smooth visuals
   exportPixelRatio: 2, // High-quality export
-  // Removed duration to allow for infinite looping
 };
 
-const INITIAL_POINTS = 200; // Start with an initial set of points
-const THOUGHTS_PER_SECOND = 0.8; // Balanced generation of new thoughts
-const POINT_LIFESPAN = 120; // Lifespan of 2 minutes for thoughts to live longer
-const MIN_ACTIVE_POINTS = 150; // Ensure a stable minimum number of points
+const INITIAL_POINTS = 300; // Start with a large set of points
+const THOUGHTS_PER_SECOND = 0.5; // Continuous generation of new thoughts, but not too fast
+const POINT_LIFESPAN_MIN = 60; // Shorter minimum lifespan
+const POINT_LIFESPAN_MAX = 180; // Randomize the lifespan between 1 to 3 minutes
+const MIN_ACTIVE_POINTS = 150; // Ensure a stable minimum number of points at all times
+
+const NOTE_MIN = 36; // C3
+const NOTE_MAX = 72; // C6
+const VELOCITY_MIN = 40;
+const VELOCITY_MAX = 100;
 
 const sketch = ({ context, width, height }) => {
   let points = [];
@@ -27,7 +53,7 @@ const sketch = ({ context, width, height }) => {
 
   return ({ context, width, height, time }) => {
     // Fading effect for the background
-    context.fillStyle = 'rgba(1, 1, 1, 0.1)';
+    context.fillStyle = 'rgba(10, 2, 2, 0.2)';
     context.fillRect(0, 0, width, height);
 
     // Ensure a minimum number of points always exist
@@ -37,7 +63,7 @@ const sketch = ({ context, width, height }) => {
       points.push(new Point(x, y));
     }
 
-    // Generate new thoughts slowly and continuously
+    // Generate new thoughts at a continuous rate (based on the frame rate)
     if (random.chance(THOUGHTS_PER_SECOND / 60)) {
       const x = random.range(0, width);
       const y = random.range(0, height);
@@ -70,19 +96,31 @@ const sketch = ({ context, width, height }) => {
     points.forEach((point, index) => {
       point.update(width, height, time);
       point.draw(context);
+
+      // MIDI Mapping Logic (Web MIDI API)
+      const midiNote = mapRange(point.pos.x, 0, width, NOTE_MIN, NOTE_MAX);
+      const velocity = mapRange(point.pos.y, 0, height, VELOCITY_MIN, VELOCITY_MAX);
+
+      // Send Note On when the point is created (if MIDI is available)
+      if (point.age === 0 && midiOutput) {
+        midiOutput.send([144, midiNote, velocity]); // 144 = Note On
+      }
+
+      // Increment age and check lifespan
       point.age += 1 / settings.fps;
 
-      // Remove points that exceed their lifespan
-      if (point.age >= POINT_LIFESPAN) {
+      // Remove the point if it has reached the end of its lifespan
+      if (point.age >= point.lifespan && midiOutput) {
+        midiOutput.send([128, midiNote, 0]); // 128 = Note Off
         points.splice(index, 1); // Remove the point
       }
     });
-
   };
 };
 
 canvasSketch(sketch, settings);
 
+// Helper classes and functions
 class Vector {
   constructor(x, y) {
     this.x = x;
@@ -94,57 +132,20 @@ class Vector {
     const dy = this.y - v.y;
     return Math.sqrt(dx * dx + dy * dy);
   }
-
-  subtract(v) {
-    return new Vector(this.x - v.x, this.y - v.y);
-  }
-
-  add(v) {
-    return new Vector(this.x + v.x, this.y + v.y);
-  }
-
-  scale(scalar) {
-    return new Vector(this.x * scalar, this.y * scalar);
-  }
-
-  length() {
-    return Math.sqrt(this.x * this.x + this.y * this.y);
-  }
-
-  normalize() {
-    const len = this.length();
-    return new Vector(this.x / len, this.y / len);
-  }
 }
 
 class Point {
   constructor(x, y) {
     this.pos = new Vector(x, y);
-    this.vel = new Vector(random.range(-0.2, 0.2), random.range(-0.2, 0.2)); 
-    this.acc = new Vector(0, 0);
+    this.vel = new Vector(random.range(-0.2, 0.2), random.range(-0.2, 0.2));
     this.radius = 3;
-    this.age = 0; // Track the lifespan of the point
-  }
-
-  applyBoundaries(width, height) {
-    const margin = 100;
-    if (this.pos.x < margin) this.vel.x += 0.01;
-    if (this.pos.x > width - margin) this.vel.x -= 0.01;
-    if (this.pos.y < margin) this.vel.y += 0.01;
-    if (this.pos.y > height - margin) this.vel.y -= 0.01;
+    this.age = 0;
+    this.lifespan = random.range(POINT_LIFESPAN_MIN, POINT_LIFESPAN_MAX); // Randomize lifespan
   }
 
   update(width, height, time) {
-    this.applyBoundaries(width, height);
-    this.vel.x += Math.sin(time * 0.2 + this.pos.y * 0.5) * 0.02;
-    this.vel.y += Math.cos(time * 0.2 + this.pos.x * 0.5) * 0.02;
-    this.vel.x += random.range(-0.005, 0.005);
-    this.vel.y += random.range(-0.005, 0.005);
-    this.pos = this.pos.add(this.vel);
-
-    const speedLimit = 0.4;
-    this.vel.x = math.clamp(this.vel.x, -speedLimit, speedLimit);
-    this.vel.y = math.clamp(this.vel.y, -speedLimit, speedLimit);
+    this.pos.x += this.vel.x;
+    this.pos.y += this.vel.y;
 
     if (this.pos.x < 0) this.pos.x = width;
     if (this.pos.x > width) this.pos.x = 0;
@@ -153,7 +154,7 @@ class Point {
   }
 
   draw(context) {
-    const alpha = math.mapRange(this.age, 0, POINT_LIFESPAN, 1, 0);
+    const alpha = math.mapRange(this.age, 0, this.lifespan, 1, 0); // Fade out over lifespan
     context.save();
     context.translate(this.pos.x, this.pos.y);
     context.fillStyle = `rgba(255, 255, 255, ${alpha})`;
@@ -162,4 +163,9 @@ class Point {
     context.fill();
     context.restore();
   }
+}
+
+// Helper function to map ranges
+function mapRange(value, inMin, inMax, outMin, outMax) {
+  return Math.round((value - inMin) * (outMax - outMin) / (inMax - inMin) + outMin);
 }
