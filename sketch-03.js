@@ -30,8 +30,8 @@ const settings = {
   exportPixelRatio: 2, // High-quality export
 };
 
-const INITIAL_POINTS = 300; // Start with a large set of points
-const THOUGHTS_PER_SECOND = 0.5; // Continuous generation of new thoughts, but not too fast
+const INITIAL_POINTS = 1; // Start with a large set of points
+const THOUGHTS_PER_SECOND = 0.2; // Continuous generation of new thoughts, but not too fast
 const POINT_LIFESPAN_MIN = 60; // Shorter minimum lifespan
 const POINT_LIFESPAN_MAX = 180; // Randomize the lifespan between 1 to 3 minutes
 const MIN_ACTIVE_POINTS = 150; // Ensure a stable minimum number of points at all times
